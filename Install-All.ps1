@@ -517,21 +517,23 @@ try {
     }
 
     $statusBefore = Get-DeploymentStatus -BundledPackages $bundledPackages
-    if ($statusBefore.Missing.Count -gt 0) {
+    if (@($statusBefore.Missing).Count -gt 0) {
         Write-Host ("2. 检测到未安装：{0}。" -f ($statusBefore.Missing -join " / ")) -ForegroundColor Yellow
     }
     else {
         Write-Host "2. 检测完成，所有软件均已安装。" -ForegroundColor Green
     }
 
-    $installationTargets = if ($Force) {
-        @($statusBefore.Installed) + @($statusBefore.Missing)
-    }
-    else {
-        @($statusBefore.Missing)
-    }
+    $installationTargets = @(
+        if ($Force) {
+            @($statusBefore.Installed) + @($statusBefore.Missing)
+        }
+        else {
+            @($statusBefore.Missing)
+        }
+    )
 
-    if ($installationTargets.Count -gt 0) {
+    if (@($installationTargets).Count -gt 0) {
         Write-Host ("3. 现在开始安装：{0}。" -f ($installationTargets -join " / ")) -ForegroundColor Cyan
     }
     else {
@@ -576,9 +578,9 @@ try {
     }
 
     $statusAfter = Get-DeploymentStatus -BundledPackages $bundledPackages
-    $installedSummary = if ($statusAfter.Installed.Count -gt 0) { $statusAfter.Installed -join " / " } else { "无" }
-    $missingSummary = if ($statusAfter.Missing.Count -gt 0) { $statusAfter.Missing -join " / " } else { "无" }
-    $summaryColor = if ($statusAfter.Missing.Count -gt 0) { "Yellow" } else { "Green" }
+    $installedSummary = if (@($statusAfter.Installed).Count -gt 0) { $statusAfter.Installed -join " / " } else { "无" }
+    $missingSummary = if (@($statusAfter.Missing).Count -gt 0) { $statusAfter.Missing -join " / " } else { "无" }
+    $summaryColor = if (@($statusAfter.Missing).Count -gt 0) { "Yellow" } else { "Green" }
     Write-Host ""
     Write-Host "6. 运行完成：已安装 $installedSummary；未安装 $missingSummary。" -ForegroundColor $summaryColor
     Write-Host "详细日志：$LogPath" -ForegroundColor Green
