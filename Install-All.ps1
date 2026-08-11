@@ -62,11 +62,16 @@ function Get-UninstallDisplayNames {
         "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
     )
 
-    $script:UninstallDisplayNames = @(
-        Get-ItemProperty -Path $registryPaths -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName } |
-            Select-Object -ExpandProperty DisplayName -Unique
-    )
+    $detectedNames = foreach ($registryPath in $registryPaths) {
+        Get-ItemProperty -Path $registryPath -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $displayNameProperty = $_.PSObject.Properties["DisplayName"]
+                if ($displayNameProperty -and -not [string]::IsNullOrWhiteSpace([string]$displayNameProperty.Value)) {
+                    [string]$displayNameProperty.Value
+                }
+            }
+    }
+    $script:UninstallDisplayNames = @($detectedNames | Sort-Object -Unique)
     return $script:UninstallDisplayNames
 }
 
@@ -156,8 +161,13 @@ function Invoke-Download {
             }
 
             Move-Item -Path $partial -Destination $Destination -Force
-            $sizeMb = [Math]::Round($file.Length / 1MB, 2)
-            Write-Step "下载完成：$([IO.Path]::GetFileName($Destination))，大小 $sizeMb MB"
+            if ($file.Length -lt 1MB) {
+                $sizeText = "{0} KB" -f [Math]::Round($file.Length / 1KB, 2)
+            }
+            else {
+                $sizeText = "{0} MB" -f [Math]::Round($file.Length / 1MB, 2)
+            }
+            Write-Step "下载完成：$([IO.Path]::GetFileName($Destination))，大小 $sizeText"
             return
         }
         catch {
@@ -269,8 +279,12 @@ function Get-BundledPackageManifest {
     $remoteManifestPath = Join-Path $RunDirectory "installers.json"
     Write-Step "正在获取 GitHub 软件清单"
     Invoke-Download -Url $manifestUrl -Destination $remoteManifestPath -MinimumBytes 100
+    $manifestText = Get-Content -Path $remoteManifestPath -Raw -Encoding UTF8
+    $parsedManifest = ConvertFrom-Json -InputObject $manifestText
     $script:BundledManifestCache = @(
-        Get-Content -Path $remoteManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($manifestItem in $parsedManifest) {
+            $manifestItem
+        }
     )
     Write-Step "软件清单已加载，共 $($script:BundledManifestCache.Count) 项"
     return $script:BundledManifestCache
@@ -424,7 +438,7 @@ function Install-LatestChrome {
 function Find-GalaxyExecutable {
     $registryPath = "HKCU:\Software\GalaxyBricklayer"
     if (Test-Path $registryPath) {
-        $installDirectory = (Get-ItemProperty -Path $registryPath -Name InstallDir -ErrorAction SilentlyContinue).InstallDir
+        $installDirectory = (Get-Item -Path $registryPath -ErrorAction SilentlyContinue).GetValue("InstallDir")
         if ($installDirectory) {
             $registeredExecutable = Join-Path $installDirectory "FastBet.exe"
             if (Test-Path $registeredExecutable) {
