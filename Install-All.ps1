@@ -25,6 +25,7 @@ $MarkerDirectory = Join-Path $Root "Installed"
 $LogPath = Join-Path $LogDirectory ("deploy-{0}.log" -f $RunId)
 New-Item -ItemType Directory -Force -Path $RunDirectory, $LogDirectory, $MarkerDirectory | Out-Null
 $script:UninstallDisplayNames = $null
+$script:BundledPackages = $null
 
 function Write-Step {
     param([string]$Message)
@@ -259,13 +260,24 @@ function Invoke-Installer {
     Write-Step "安装完成：$Name"
 }
 
-function Install-BundledPackages {
+function Get-BundledPackageManifest {
+    if ($null -ne $script:BundledPackages) {
+        return $script:BundledPackages
+    }
+
     $manifestUrl = "https://raw.githubusercontent.com/$Repository/$Branch/installers.json"
     $remoteManifestPath = Join-Path $RunDirectory "installers.json"
     Write-Step "正在获取 GitHub 软件清单"
     Invoke-Download -Url $manifestUrl -Destination $remoteManifestPath -MinimumBytes 100
-    $packages = Get-Content -Path $remoteManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    Write-Step "软件清单已加载，共 $(@($packages).Count) 项"
+    $script:BundledPackages = @(
+        Get-Content -Path $remoteManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    )
+    Write-Step "软件清单已加载，共 $($script:BundledPackages.Count) 项"
+    return $script:BundledPackages
+}
+
+function Install-BundledPackages {
+    $packages = @(Get-BundledPackageManifest)
 
     $pendingPackages = @()
     foreach ($package in $packages) {
@@ -316,16 +328,24 @@ function Install-BundledPackages {
             Copy-Item -Path $packagePath -Destination $destination -Force
             Write-InstallationMarker -Package $package -SourcePath $packagePath
             Write-Step "已复制到 Windows 公共桌面：$($package.name)"
+            Write-Host "5. $($package.name) 安装成功。" -ForegroundColor Green
             continue
         }
 
-        Invoke-Installer `
-            -Name $package.name `
-            -Path $packagePath `
-            -Type $package.type `
-            -Arguments $package.arguments `
-            -TimeoutSeconds $package.timeoutSeconds
-        Write-InstallationMarker -Package $package -SourcePath $packagePath
+        try {
+            Invoke-Installer `
+                -Name $package.name `
+                -Path $packagePath `
+                -Type $package.type `
+                -Arguments $package.arguments `
+                -TimeoutSeconds $package.timeoutSeconds
+            Write-InstallationMarker -Package $package -SourcePath $packagePath
+            Write-Host "5. $($package.name) 安装成功。" -ForegroundColor Green
+        }
+        catch {
+            Write-Host "4. $($package.name) 安装失败，已跳过。" -ForegroundColor Yellow
+            Write-Warning $_.Exception.Message
+        }
     }
 }
 
@@ -436,31 +456,131 @@ function Install-LatestGalaxy {
     Invoke-Installer -Name "Galaxy Bricklayer (latest official)" -Path $path -Type "Exe" -Arguments "/S"
 }
 
+function Get-DeploymentStatus {
+    param([array]$BundledPackages)
+
+    $installedNames = @()
+    $missingNames = @()
+
+    if (-not $SkipChrome) {
+        if (Find-ChromeExecutable) {
+            $installedNames += "Google Chrome"
+        }
+        else {
+            $missingNames += "Google Chrome"
+        }
+    }
+
+    if (-not $SkipBundled) {
+        foreach ($package in @($BundledPackages)) {
+            if ($package.enabled -eq $false) {
+                continue
+            }
+            if (Test-BundledPackageInstalled -Package $package) {
+                $installedNames += $package.name
+            }
+            else {
+                $missingNames += $package.name
+            }
+        }
+    }
+
+    if (-not $SkipGalaxy) {
+        if (Find-GalaxyExecutable) {
+            $installedNames += "银河搬砖工"
+        }
+        else {
+            $missingNames += "银河搬砖工"
+        }
+    }
+
+    return [PSCustomObject]@{
+        Installed = @($installedNames)
+        Missing = @($missingNames)
+    }
+}
+
 $transcriptStarted = $false
 try {
     Start-Transcript -Path $LogPath -Append | Out-Null
     $transcriptStarted = $true
+    Write-Host "1. 环境检查中。" -ForegroundColor Cyan
     Assert-Administrator
     Write-Host ""
     Write-Host "银河搬砖工 Windows 工作环境一键部署" -ForegroundColor Green
     Write-Step "部署任务已启动，运行编号：$RunId"
     Write-Step "工作目录：$RunDirectory"
 
-    if (-not $SkipChrome) {
-        Write-Phase -Current 1 -Total 3 -Message "检查并部署 Google Chrome"
-        Install-LatestChrome
-    }
+    $bundledPackages = @()
     if (-not $SkipBundled) {
-        Write-Phase -Current 2 -Total 3 -Message "检查并部署 GitHub 内置软件"
-        Install-BundledPackages
-    }
-    if (-not $SkipGalaxy) {
-        Write-Phase -Current 3 -Total 3 -Message "检查并部署银河搬砖工"
-        Install-LatestGalaxy
+        $bundledPackages = @(Get-BundledPackageManifest)
     }
 
+    $statusBefore = Get-DeploymentStatus -BundledPackages $bundledPackages
+    if ($statusBefore.Missing.Count -gt 0) {
+        Write-Host ("2. 检测到未安装：{0}。" -f ($statusBefore.Missing -join " / ")) -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "2. 检测完成，所有软件均已安装。" -ForegroundColor Green
+    }
+
+    $installationTargets = if ($Force) {
+        @($statusBefore.Installed) + @($statusBefore.Missing)
+    }
+    else {
+        @($statusBefore.Missing)
+    }
+
+    if ($installationTargets.Count -gt 0) {
+        Write-Host ("3. 现在开始安装：{0}。" -f ($installationTargets -join " / ")) -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "3. 没有需要安装的软件。" -ForegroundColor Green
+    }
+
+    if (-not $SkipChrome -and ($Force -or ($statusBefore.Missing -contains "Google Chrome"))) {
+        try {
+            Install-LatestChrome
+            Write-Host "5. Google Chrome 安装成功。" -ForegroundColor Green
+        }
+        catch {
+            Write-Host "4. Google Chrome 安装失败，已跳过。" -ForegroundColor Yellow
+            Write-Warning $_.Exception.Message
+        }
+    }
+
+    $missingBundledNames = @($statusBefore.Missing | Where-Object { $_ -notin @("Google Chrome", "银河搬砖工") })
+    if (-not $SkipBundled -and ($Force -or ($missingBundledNames.Count -gt 0))) {
+        try {
+            Install-BundledPackages
+        }
+        catch {
+            Write-Warning "GitHub 内置软件部署流程异常：$($_.Exception.Message)"
+            foreach ($package in $bundledPackages) {
+                if ($package.enabled -and ($Force -or -not (Test-BundledPackageInstalled -Package $package))) {
+                    Write-Host "4. $($package.name) 安装失败，已跳过。" -ForegroundColor Yellow
+                }
+            }
+        }
+    }
+
+    if (-not $SkipGalaxy -and ($Force -or ($statusBefore.Missing -contains "银河搬砖工"))) {
+        try {
+            Install-LatestGalaxy
+            Write-Host "5. 银河搬砖工安装成功。" -ForegroundColor Green
+        }
+        catch {
+            Write-Host "4. 银河搬砖工安装失败，已跳过。" -ForegroundColor Yellow
+            Write-Warning $_.Exception.Message
+        }
+    }
+
+    $statusAfter = Get-DeploymentStatus -BundledPackages $bundledPackages
+    $installedSummary = if ($statusAfter.Installed.Count -gt 0) { $statusAfter.Installed -join " / " } else { "无" }
+    $missingSummary = if ($statusAfter.Missing.Count -gt 0) { $statusAfter.Missing -join " / " } else { "无" }
+    $summaryColor = if ($statusAfter.Missing.Count -gt 0) { "Yellow" } else { "Green" }
     Write-Host ""
-    Write-Host "全部部署任务已完成。" -ForegroundColor Green
+    Write-Host "6. 运行完成：已安装 $installedSummary；未安装 $missingSummary。" -ForegroundColor $summaryColor
     Write-Host "详细日志：$LogPath" -ForegroundColor Green
 }
 catch {

@@ -1,7 +1,7 @@
 [
   {
     "id": "wps-office-2019-bundle",
-    "name": "WPS + Office 2019 bundle",
+    "name": "WPS + Office 2019",
     "file": "1WPS+Office+2019封装专用直装绿化版.exe",
     "action": "Install",
     "type": "Exe",
@@ -29,7 +29,7 @@
   },
   {
     "id": "winrar-7-x64",
-    "name": "WinRAR 7.00 x64",
+    "name": "WinRAR 7.00",
     "file": "1WinRAR-7.00-Final-x64-烈火汉化版.exe",
     "action": "Install",
     "type": "Exe",
@@ -48,7 +48,7 @@
   },
   {
     "id": "activation-utility",
-    "name": "Activation utility",
+    "name": "激活工具",
     "file": "1万能激活工具.exe",
     "action": "CopyToPublicDesktop",
     "type": "Exe",
@@ -64,7 +64,7 @@
   },
   {
     "id": "sogou-input-14-3",
-    "name": "Sogou Input 14.3",
+    "name": "搜狗输入法 14.3",
     "file": "1搜狗输入法v14.3.0.9006去广告精简优化版.exe",
     "action": "Install",
     "type": "Exe",
