@@ -20,7 +20,9 @@
         "displayNamePatterns": ["*Microsoft Office*", "*Microsoft 365*"],
         "filePaths": [
           "%ProgramFiles%\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
-          "%ProgramFiles(x86)%\\Microsoft Office\\root\\Office16\\WINWORD.EXE"
+          "%ProgramFiles(x86)%\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "%ProgramFiles%\\Microsoft Office\\Office16\\WINWORD.EXE",
+          "%ProgramFiles(x86)%\\Microsoft Office\\Office16\\WINWORD.EXE"
         ]
       }
     ]

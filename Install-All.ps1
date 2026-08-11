@@ -3,6 +3,7 @@ param(
     [string]$Repository = "BoomBook888/Install-Galaxy-Workstation",
     [string]$Branch = "main",
     [string]$ChromeDownloadUrl = "https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi",
+    [string]$ChromeFallbackDownloadUrl = "https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe",
     [string]$GalaxyDownloadUrl = "http://98.159.96.54/api/download/pro",
     [switch]$SkipBundled,
     [switch]$SkipChrome,
@@ -23,6 +24,7 @@ $LogDirectory = Join-Path $Root "Logs"
 $MarkerDirectory = Join-Path $Root "Installed"
 $LogPath = Join-Path $LogDirectory ("deploy-{0}.log" -f $RunId)
 New-Item -ItemType Directory -Force -Path $RunDirectory, $LogDirectory, $MarkerDirectory | Out-Null
+$script:UninstallDisplayNames = $null
 
 function Write-Step {
     param([string]$Message)
@@ -326,9 +328,14 @@ function Install-LatestChrome {
     }
 
     $path = Join-Path $RunDirectory "GoogleChromeStandaloneEnterprise64.msi"
+    $msiLogPath = Join-Path $LogDirectory ("chrome-msi-{0}.log" -f $RunId)
     Invoke-Download -Url $ChromeDownloadUrl -Destination $path -MinimumBytes 10MB
     try {
-        Invoke-Installer -Name "Google Chrome (latest stable)" -Path $path -Type "Msi" -Arguments "/qn /norestart"
+        Invoke-Installer `
+            -Name "Google Chrome (latest stable)" `
+            -Path $path `
+            -Type "Msi" `
+            -Arguments "/qn /norestart /L*v `"$msiLogPath`""
     }
     catch {
         $installedAfterAttempt = Find-ChromeExecutable
@@ -337,7 +344,26 @@ function Install-LatestChrome {
             Write-Warning "Chrome MSI returned an error, but Chrome is installed (version $version). Continuing."
             return
         }
-        throw
+
+        Write-Warning "Chrome MSI installation failed. Trying the official standalone EXE. MSI log: $msiLogPath"
+        $fallbackPath = Join-Path $RunDirectory "ChromeStandaloneSetup64.exe"
+        Invoke-Download -Url $ChromeFallbackDownloadUrl -Destination $fallbackPath -MinimumBytes 10MB
+        Invoke-Installer `
+            -Name "Google Chrome standalone fallback" `
+            -Path $fallbackPath `
+            -Type "Exe" `
+            -Arguments "/silent /install"
+
+        foreach ($attempt in 1..12) {
+            $installedAfterAttempt = Find-ChromeExecutable
+            if ($installedAfterAttempt) {
+                $version = (Get-Item $installedAfterAttempt).VersionInfo.ProductVersion
+                Write-Step "Google Chrome installation verified. Version: $version"
+                return
+            }
+            Start-Sleep -Seconds 5
+        }
+        throw "Chrome installer completed, but chrome.exe was not found. MSI log: $msiLogPath"
     }
 }
 
