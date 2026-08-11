@@ -25,7 +25,7 @@ $MarkerDirectory = Join-Path $Root "Installed"
 $LogPath = Join-Path $LogDirectory ("deploy-{0}.log" -f $RunId)
 New-Item -ItemType Directory -Force -Path $RunDirectory, $LogDirectory, $MarkerDirectory | Out-Null
 $script:UninstallDisplayNames = $null
-$script:BundledPackages = $null
+$script:BundledManifestCache = $null
 
 function Write-Step {
     param([string]$Message)
@@ -261,19 +261,19 @@ function Invoke-Installer {
 }
 
 function Get-BundledPackageManifest {
-    if ($null -ne $script:BundledPackages) {
-        return $script:BundledPackages
+    if ($null -ne $script:BundledManifestCache) {
+        return $script:BundledManifestCache
     }
 
     $manifestUrl = "https://raw.githubusercontent.com/$Repository/$Branch/installers.json"
     $remoteManifestPath = Join-Path $RunDirectory "installers.json"
     Write-Step "正在获取 GitHub 软件清单"
     Invoke-Download -Url $manifestUrl -Destination $remoteManifestPath -MinimumBytes 100
-    $script:BundledPackages = @(
+    $script:BundledManifestCache = @(
         Get-Content -Path $remoteManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     )
-    Write-Step "软件清单已加载，共 $($script:BundledPackages.Count) 项"
-    return $script:BundledPackages
+    Write-Step "软件清单已加载，共 $($script:BundledManifestCache.Count) 项"
+    return $script:BundledManifestCache
 }
 
 function Install-BundledPackages {
