@@ -193,6 +193,14 @@ function Install-BundledPackages {
             throw "Bundled installer was not found: $($package.file)"
         }
 
+        if ($package.action -eq "CopyToPublicDesktop") {
+            $publicDesktop = [Environment]::GetFolderPath("CommonDesktopDirectory")
+            $destination = Join-Path $publicDesktop ([IO.Path]::GetFileName($packagePath))
+            Copy-Item -Path $packagePath -Destination $destination -Force
+            Write-Step "$($package.name) was copied to the public desktop"
+            continue
+        }
+
         Invoke-Installer `
             -Name $package.name `
             -Path $packagePath `

@@ -42,4 +42,4 @@ C:\ProgramData\GalaxyWorkstationDeploy\Logs
 
 每个安装包都会在执行前校验文件格式并记录 SHA256。`installers.json` 控制仓库内置软件的顺序、安静安装参数和启用状态。
 
-`Activation utility` 默认不自动执行，避免在无人值守环境中卡住部署，也应只在持有有效软件授权时使用。
+`Activation utility` 会被部署到 Windows 公共桌面，但不在 SSH 无人值守会话中强制执行，避免图形窗口卡住整个部署流程。应只在持有有效软件授权时使用。
