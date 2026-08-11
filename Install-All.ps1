@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Repository = "BoomBook888/Install-Galaxy-Workstation",
     [string]$Branch = "main",
@@ -31,12 +31,23 @@ function Write-Step {
     Write-Host ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $Message) -ForegroundColor Cyan
 }
 
+function Write-Phase {
+    param(
+        [int]$Current,
+        [int]$Total,
+        [string]$Message
+    )
+    Write-Host ""
+    Write-Host ("========== [{0}/{1}] {2} ==========" -f $Current, $Total, $Message) -ForegroundColor Yellow
+}
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw "Run this command from an Administrator PowerShell session."
+        throw "请使用管理员权限运行 PowerShell。"
     }
+    Write-Step "管理员权限检查通过"
 }
 
 function Get-UninstallDisplayNames {
@@ -127,7 +138,7 @@ function Invoke-Download {
         $partial = "$Destination.partial-$PID-$attempt"
         try {
             Remove-Item $partial -Force -ErrorAction SilentlyContinue
-            Write-Step "Download attempt $attempt`: $Url"
+            Write-Step "正在下载（第 $attempt/4 次）：$Url"
             Invoke-WebRequest `
                 -Uri $Url `
                 -OutFile $partial `
@@ -140,15 +151,17 @@ function Invoke-Download {
 
             $file = Get-Item $partial
             if ($file.Length -lt $MinimumBytes) {
-                throw "Downloaded file is too small: $($file.Length) bytes"
+                throw "下载文件过小：$($file.Length) 字节"
             }
 
             Move-Item -Path $partial -Destination $Destination -Force
+            $sizeMb = [Math]::Round($file.Length / 1MB, 2)
+            Write-Step "下载完成：$([IO.Path]::GetFileName($Destination))，大小 $sizeMb MB"
             return
         }
         catch {
             $lastError = $_
-            Write-Warning "Download failed: $($_.Exception.Message)"
+            Write-Warning "下载失败：$($_.Exception.Message)"
             if ($attempt -lt 4) {
                 Start-Sleep -Seconds (3 * $attempt)
             }
@@ -158,7 +171,7 @@ function Invoke-Download {
         }
     }
 
-    throw "Download failed after all retries: $($lastError.Exception.Message)"
+    throw "下载重试4次后仍失败：$($lastError.Exception.Message)"
 }
 
 function Assert-Package {
@@ -178,7 +191,7 @@ function Assert-Package {
     }
 
     if ($readCount -lt $expectedLength) {
-        throw "Package header is incomplete: $Path"
+        throw "安装包文件头不完整：$Path"
     }
 
     switch ($Type) {
@@ -201,11 +214,12 @@ function Assert-Package {
     }
 
     if (-not $valid) {
-        throw "Invalid $Type package: $Path"
+        throw "安装包格式无效（$Type）：$Path"
     }
 
     $hash = (Get-FileHash -Path $Path -Algorithm SHA256).Hash
-    Write-Step "Verified $([IO.Path]::GetFileName($Path)). SHA256: $hash"
+    Write-Step "文件校验通过：$([IO.Path]::GetFileName($Path))"
+    Write-Step "SHA256：$hash"
 }
 
 function Invoke-Installer {
@@ -218,7 +232,7 @@ function Invoke-Installer {
     )
 
     Assert-Package -Path $Path -Type $Type
-    Write-Step "Installing $Name"
+    Write-Step "开始安装：$Name"
 
     if ($Type -eq "Msi") {
         $process = Start-Process `
@@ -235,47 +249,65 @@ function Invoke-Installer {
 
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-        throw "$Name installation timed out after $TimeoutSeconds seconds"
+        throw "$Name 安装超时（$TimeoutSeconds 秒）"
     }
 
     if ($process.ExitCode -notin @(0, 1641, 3010)) {
-        throw "$Name installation failed. Exit code: $($process.ExitCode)"
+        throw "$Name 安装失败，退出码：$($process.ExitCode)"
     }
 
-    Write-Step "$Name installation completed"
+    Write-Step "安装完成：$Name"
 }
 
 function Install-BundledPackages {
+    $manifestUrl = "https://raw.githubusercontent.com/$Repository/$Branch/installers.json"
+    $remoteManifestPath = Join-Path $RunDirectory "installers.json"
+    Write-Step "正在获取 GitHub 软件清单"
+    Invoke-Download -Url $manifestUrl -Destination $remoteManifestPath -MinimumBytes 100
+    $packages = Get-Content -Path $remoteManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Step "软件清单已加载，共 $(@($packages).Count) 项"
+
+    $pendingPackages = @()
+    foreach ($package in $packages) {
+        if ($package.enabled -eq $false) {
+            Write-Step "已禁用，跳过：$($package.name)"
+            continue
+        }
+
+        Write-Step "检查是否已部署：$($package.name)"
+        if (-not $Force -and (Test-BundledPackageInstalled -Package $package)) {
+            Write-Step "已安装，无需重复处理：$($package.name)"
+            continue
+        }
+        $pendingPackages += $package
+    }
+
+    if ($pendingPackages.Count -eq 0) {
+        Write-Step "GitHub 内置软件均已安装，不下载仓库大包"
+        return
+    }
+
+    Write-Step "有 $($pendingPackages.Count) 项软件需要部署，开始下载 GitHub 仓库"
     $archiveUrl = "https://github.com/$Repository/archive/refs/heads/$Branch.zip"
     $archivePath = Join-Path $RunDirectory "repository.zip"
     $extractPath = Join-Path $RunDirectory "repository"
 
     Invoke-Download -Url $archiveUrl -Destination $archivePath -MinimumBytes 1MB
     Assert-Package -Path $archivePath -Type "Zip"
+    Write-Step "正在解压 GitHub 软件包"
     Expand-Archive -Path $archivePath -DestinationPath $extractPath -Force
 
     $manifestPath = Get-ChildItem -Path $extractPath -Filter "installers.json" -Recurse |
         Select-Object -First 1 -ExpandProperty FullName
     if (-not $manifestPath) {
-        throw "installers.json was not found in the GitHub repository archive"
+        throw "GitHub 仓库压缩包中未找到 installers.json"
     }
 
     $repositoryRoot = Split-Path $manifestPath -Parent
-    $packages = Get-Content -Path $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    foreach ($package in $packages) {
-        if ($package.enabled -eq $false) {
-            Write-Step "Skipping disabled package: $($package.name)"
-            continue
-        }
-
-        if (-not $Force -and (Test-BundledPackageInstalled -Package $package)) {
-            Write-Step "$($package.name) is already installed. Skipping."
-            continue
-        }
-
+    foreach ($package in $pendingPackages) {
         $packagePath = Join-Path $repositoryRoot $package.file
         if (-not (Test-Path $packagePath)) {
-            throw "Bundled installer was not found: $($package.file)"
+            throw "未找到内置安装包：$($package.file)"
         }
 
         if ($package.action -eq "CopyToPublicDesktop") {
@@ -283,7 +315,7 @@ function Install-BundledPackages {
             $destination = Join-Path $publicDesktop ([IO.Path]::GetFileName($packagePath))
             Copy-Item -Path $packagePath -Destination $destination -Force
             Write-InstallationMarker -Package $package -SourcePath $packagePath
-            Write-Step "$($package.name) was copied to the public desktop"
+            Write-Step "已复制到 Windows 公共桌面：$($package.name)"
             continue
         }
 
@@ -323,10 +355,11 @@ function Install-LatestChrome {
     $installedChrome = Find-ChromeExecutable
     if (-not $Force -and $installedChrome) {
         $version = (Get-Item $installedChrome).VersionInfo.ProductVersion
-        Write-Step "Google Chrome is already installed (version $version). Skipping."
+        Write-Step "Google Chrome 已安装，版本 $version，直接跳过"
         return
     }
 
+    Write-Step "未检测到 Google Chrome，将从 Google 官网获取最新稳定版"
     $path = Join-Path $RunDirectory "GoogleChromeStandaloneEnterprise64.msi"
     $msiLogPath = Join-Path $LogDirectory ("chrome-msi-{0}.log" -f $RunId)
     Invoke-Download -Url $ChromeDownloadUrl -Destination $path -MinimumBytes 10MB
@@ -341,11 +374,12 @@ function Install-LatestChrome {
         $installedAfterAttempt = Find-ChromeExecutable
         if ($installedAfterAttempt) {
             $version = (Get-Item $installedAfterAttempt).VersionInfo.ProductVersion
-            Write-Warning "Chrome MSI returned an error, but Chrome is installed (version $version). Continuing."
+            Write-Warning "Chrome MSI 返回异常，但已检测到 Chrome $version，继续部署。"
             return
         }
 
-        Write-Warning "Chrome MSI installation failed. Trying the official standalone EXE. MSI log: $msiLogPath"
+        Write-Warning "Chrome MSI 安装失败，正在尝试 Google 官方独立 EXE 安装器。"
+        Write-Step "Chrome MSI 详细日志：$msiLogPath"
         $fallbackPath = Join-Path $RunDirectory "ChromeStandaloneSetup64.exe"
         Invoke-Download -Url $ChromeFallbackDownloadUrl -Destination $fallbackPath -MinimumBytes 10MB
         Invoke-Installer `
@@ -358,12 +392,12 @@ function Install-LatestChrome {
             $installedAfterAttempt = Find-ChromeExecutable
             if ($installedAfterAttempt) {
                 $version = (Get-Item $installedAfterAttempt).VersionInfo.ProductVersion
-                Write-Step "Google Chrome installation verified. Version: $version"
+                Write-Step "Google Chrome 安装验证通过，版本：$version"
                 return
             }
             Start-Sleep -Seconds 5
         }
-        throw "Chrome installer completed, but chrome.exe was not found. MSI log: $msiLogPath"
+        throw "Chrome 安装器已结束，但未找到 chrome.exe。MSI 日志：$msiLogPath"
     }
 }
 
@@ -390,10 +424,11 @@ function Install-LatestGalaxy {
     $installedGalaxy = Find-GalaxyExecutable
     if (-not $Force -and $installedGalaxy) {
         $version = (Get-Item $installedGalaxy).VersionInfo.ProductVersion
-        Write-Step "Galaxy Bricklayer is already installed (version $version). Skipping."
+        Write-Step "银河搬砖工已安装，版本 $version，直接跳过"
         return
     }
 
+    Write-Step "未检测到银河搬砖工，将从官网获取最新安装器"
     $path = Join-Path $RunDirectory "GalaxyBricklayer-latest-Setup.exe"
     Invoke-Download -Url $GalaxyDownloadUrl -Destination $path -MinimumBytes 10MB
     Get-Process -Name "FastBet" -ErrorAction SilentlyContinue |
@@ -406,26 +441,32 @@ try {
     Start-Transcript -Path $LogPath -Append | Out-Null
     $transcriptStarted = $true
     Assert-Administrator
-    Write-Step "Starting Galaxy workstation deployment"
+    Write-Host ""
+    Write-Host "银河搬砖工 Windows 工作环境一键部署" -ForegroundColor Green
+    Write-Step "部署任务已启动，运行编号：$RunId"
+    Write-Step "工作目录：$RunDirectory"
 
     if (-not $SkipChrome) {
+        Write-Phase -Current 1 -Total 3 -Message "检查并部署 Google Chrome"
         Install-LatestChrome
     }
     if (-not $SkipBundled) {
+        Write-Phase -Current 2 -Total 3 -Message "检查并部署 GitHub 内置软件"
         Install-BundledPackages
     }
     if (-not $SkipGalaxy) {
+        Write-Phase -Current 3 -Total 3 -Message "检查并部署银河搬砖工"
         Install-LatestGalaxy
     }
 
     Write-Host ""
-    Write-Host "Deployment completed successfully." -ForegroundColor Green
-    Write-Host "Log: $LogPath" -ForegroundColor Green
+    Write-Host "全部部署任务已完成。" -ForegroundColor Green
+    Write-Host "详细日志：$LogPath" -ForegroundColor Green
 }
 catch {
     Write-Host ""
-    Write-Host "Deployment failed: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Log: $LogPath" -ForegroundColor Yellow
+    Write-Host "部署失败：$($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "详细日志：$LogPath" -ForegroundColor Yellow
     exit 1
 }
 finally {
