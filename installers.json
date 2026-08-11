@@ -1,0 +1,34 @@
+[
+  {
+    "name": "WPS + Office 2019 bundle",
+    "file": "1WPS+Office+2019封装专用直装绿化版.exe",
+    "type": "Exe",
+    "arguments": "/S",
+    "timeoutSeconds": 1800,
+    "enabled": true
+  },
+  {
+    "name": "WinRAR 7.00 x64",
+    "file": "1WinRAR-7.00-Final-x64-烈火汉化版.exe",
+    "type": "Exe",
+    "arguments": "-s",
+    "timeoutSeconds": 600,
+    "enabled": true
+  },
+  {
+    "name": "Activation utility",
+    "file": "1万能激活工具.exe",
+    "type": "Exe",
+    "arguments": "/S",
+    "timeoutSeconds": 600,
+    "enabled": false
+  },
+  {
+    "name": "Sogou Input 14.3",
+    "file": "1搜狗输入法v14.3.0.9006去广告精简优化版.exe",
+    "type": "Exe",
+    "arguments": "/S",
+    "timeoutSeconds": 900,
+    "enabled": true
+  }
+]
