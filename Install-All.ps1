@@ -7,6 +7,7 @@ param(
     [switch]$SkipBundled,
     [switch]$SkipChrome,
     [switch]$SkipGalaxy,
+    [switch]$Force,
     [switch]$KeepDownloadedFiles
 )
 
@@ -19,8 +20,9 @@ $Root = Join-Path $env:ProgramData "GalaxyWorkstationDeploy"
 $RunId = Get-Date -Format "yyyyMMdd-HHmmss"
 $RunDirectory = Join-Path $Root $RunId
 $LogDirectory = Join-Path $Root "Logs"
+$MarkerDirectory = Join-Path $Root "Installed"
 $LogPath = Join-Path $LogDirectory ("deploy-{0}.log" -f $RunId)
-New-Item -ItemType Directory -Force -Path $RunDirectory, $LogDirectory | Out-Null
+New-Item -ItemType Directory -Force -Path $RunDirectory, $LogDirectory, $MarkerDirectory | Out-Null
 
 function Write-Step {
     param([string]$Message)
@@ -33,6 +35,82 @@ function Assert-Administrator {
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw "Run this command from an Administrator PowerShell session."
     }
+}
+
+function Get-UninstallDisplayNames {
+    if ($null -ne $script:UninstallDisplayNames) {
+        return $script:UninstallDisplayNames
+    }
+
+    $registryPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+
+    $script:UninstallDisplayNames = @(
+        Get-ItemProperty -Path $registryPaths -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName } |
+            Select-Object -ExpandProperty DisplayName -Unique
+    )
+    return $script:UninstallDisplayNames
+}
+
+function Test-DetectionGroup {
+    param([Parameter(Mandatory = $true)]$Group)
+
+    $displayNames = Get-UninstallDisplayNames
+    foreach ($pattern in @($Group.displayNamePatterns)) {
+        if ($displayNames | Where-Object { $_ -like $pattern } | Select-Object -First 1) {
+            return $true
+        }
+    }
+
+    foreach ($pathPattern in @($Group.filePaths)) {
+        $expandedPath = [Environment]::ExpandEnvironmentVariables($pathPattern)
+        if (Test-Path -Path $expandedPath) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-BundledPackageInstalled {
+    param([Parameter(Mandatory = $true)]$Package)
+
+    $marker = Join-Path $MarkerDirectory ("{0}.json" -f $Package.id)
+    if (Test-Path $marker) {
+        return $true
+    }
+
+    $groups = @($Package.detectGroups)
+    if ($groups.Count -eq 0) {
+        return $false
+    }
+
+    foreach ($group in $groups) {
+        if (-not (Test-DetectionGroup -Group $group)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Write-InstallationMarker {
+    param(
+        [Parameter(Mandatory = $true)]$Package,
+        [Parameter(Mandatory = $true)][string]$SourcePath
+    )
+
+    $marker = Join-Path $MarkerDirectory ("{0}.json" -f $Package.id)
+    [ordered]@{
+        id = $Package.id
+        name = $Package.name
+        installedAt = (Get-Date).ToString("o")
+        sourceSha256 = (Get-FileHash -Path $SourcePath -Algorithm SHA256).Hash
+    } | ConvertTo-Json | Set-Content -Path $marker -Encoding UTF8
 }
 
 function Invoke-Download {
@@ -188,6 +266,11 @@ function Install-BundledPackages {
             continue
         }
 
+        if (-not $Force -and (Test-BundledPackageInstalled -Package $package)) {
+            Write-Step "$($package.name) is already installed. Skipping."
+            continue
+        }
+
         $packagePath = Join-Path $repositoryRoot $package.file
         if (-not (Test-Path $packagePath)) {
             throw "Bundled installer was not found: $($package.file)"
@@ -197,6 +280,7 @@ function Install-BundledPackages {
             $publicDesktop = [Environment]::GetFolderPath("CommonDesktopDirectory")
             $destination = Join-Path $publicDesktop ([IO.Path]::GetFileName($packagePath))
             Copy-Item -Path $packagePath -Destination $destination -Force
+            Write-InstallationMarker -Package $package -SourcePath $packagePath
             Write-Step "$($package.name) was copied to the public desktop"
             continue
         }
@@ -207,16 +291,83 @@ function Install-BundledPackages {
             -Type $package.type `
             -Arguments $package.arguments `
             -TimeoutSeconds $package.timeoutSeconds
+        Write-InstallationMarker -Package $package -SourcePath $packagePath
     }
 }
 
+function Find-ChromeExecutable {
+    $candidates = @(
+        "C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        (Join-Path $env:LOCALAPPDATA "Google\Chrome\Application\chrome.exe")
+    )
+
+    foreach ($registryPath in @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+    )) {
+        if (Test-Path $registryPath) {
+            $registeredPath = (Get-Item -Path $registryPath -ErrorAction SilentlyContinue).GetValue("")
+            if ($registeredPath) {
+                $candidates += $registeredPath
+            }
+        }
+    }
+
+    $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
+
 function Install-LatestChrome {
+    $installedChrome = Find-ChromeExecutable
+    if (-not $Force -and $installedChrome) {
+        $version = (Get-Item $installedChrome).VersionInfo.ProductVersion
+        Write-Step "Google Chrome is already installed (version $version). Skipping."
+        return
+    }
+
     $path = Join-Path $RunDirectory "GoogleChromeStandaloneEnterprise64.msi"
     Invoke-Download -Url $ChromeDownloadUrl -Destination $path -MinimumBytes 10MB
-    Invoke-Installer -Name "Google Chrome (latest stable)" -Path $path -Type "Msi" -Arguments "/qn /norestart"
+    try {
+        Invoke-Installer -Name "Google Chrome (latest stable)" -Path $path -Type "Msi" -Arguments "/qn /norestart"
+    }
+    catch {
+        $installedAfterAttempt = Find-ChromeExecutable
+        if ($installedAfterAttempt) {
+            $version = (Get-Item $installedAfterAttempt).VersionInfo.ProductVersion
+            Write-Warning "Chrome MSI returned an error, but Chrome is installed (version $version). Continuing."
+            return
+        }
+        throw
+    }
+}
+
+function Find-GalaxyExecutable {
+    $registryPath = "HKCU:\Software\GalaxyBricklayer"
+    if (Test-Path $registryPath) {
+        $installDirectory = (Get-ItemProperty -Path $registryPath -Name InstallDir -ErrorAction SilentlyContinue).InstallDir
+        if ($installDirectory) {
+            $registeredExecutable = Join-Path $installDirectory "FastBet.exe"
+            if (Test-Path $registeredExecutable) {
+                return $registeredExecutable
+            }
+        }
+    }
+
+    $defaultExecutable = Join-Path $env:LOCALAPPDATA "Programs\GalaxyBricklayer\FastBet.exe"
+    if (Test-Path $defaultExecutable) {
+        return $defaultExecutable
+    }
+    return $null
 }
 
 function Install-LatestGalaxy {
+    $installedGalaxy = Find-GalaxyExecutable
+    if (-not $Force -and $installedGalaxy) {
+        $version = (Get-Item $installedGalaxy).VersionInfo.ProductVersion
+        Write-Step "Galaxy Bricklayer is already installed (version $version). Skipping."
+        return
+    }
+
     $path = Join-Path $RunDirectory "GalaxyBricklayer-latest-Setup.exe"
     Invoke-Download -Url $GalaxyDownloadUrl -Destination $path -MinimumBytes 10MB
     Get-Process -Name "FastBet" -ErrorAction SilentlyContinue |

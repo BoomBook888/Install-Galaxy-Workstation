@@ -10,6 +10,8 @@
 
 Chrome 和银河搬砖工不在仓库内固定版本，也不使用旧安装包缓存。
 
+脚本会先检查卸载注册表、常见安装路径和部署标记。已安装的软件不会重复下载或安装。
+
 ## 服务器一键安装
 
 以管理员身份打开 PowerShell，执行：
@@ -36,6 +38,9 @@ C:\ProgramData\GalaxyWorkstationDeploy\Logs
 
 # 保留本次下载文件，便于调试
 .\Install-All.ps1 -KeepDownloadedFiles
+
+# 忽略已安装检测，强制重装或升级所有软件
+.\Install-All.ps1 -Force
 ```
 
 ## 安全说明

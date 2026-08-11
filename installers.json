@@ -1,38 +1,82 @@
 [
   {
+    "id": "wps-office-2019-bundle",
     "name": "WPS + Office 2019 bundle",
     "file": "1WPS+Office+2019封装专用直装绿化版.exe",
     "action": "Install",
     "type": "Exe",
     "arguments": "/S",
     "timeoutSeconds": 1800,
-    "enabled": true
+    "enabled": true,
+    "detectGroups": [
+      {
+        "displayNamePatterns": ["*WPS*", "*Kingsoft*"],
+        "filePaths": [
+          "%ProgramFiles%\\Kingsoft\\WPS Office\\*\\office6\\wps.exe",
+          "%ProgramFiles(x86)%\\Kingsoft\\WPS Office\\*\\office6\\wps.exe"
+        ]
+      },
+      {
+        "displayNamePatterns": ["*Microsoft Office*", "*Microsoft 365*"],
+        "filePaths": [
+          "%ProgramFiles%\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "%ProgramFiles(x86)%\\Microsoft Office\\root\\Office16\\WINWORD.EXE"
+        ]
+      }
+    ]
   },
   {
+    "id": "winrar-7-x64",
     "name": "WinRAR 7.00 x64",
     "file": "1WinRAR-7.00-Final-x64-烈火汉化版.exe",
     "action": "Install",
     "type": "Exe",
     "arguments": "-s",
     "timeoutSeconds": 600,
-    "enabled": true
+    "enabled": true,
+    "detectGroups": [
+      {
+        "displayNamePatterns": ["*WinRAR*"],
+        "filePaths": [
+          "%ProgramFiles%\\WinRAR\\WinRAR.exe",
+          "%ProgramFiles(x86)%\\WinRAR\\WinRAR.exe"
+        ]
+      }
+    ]
   },
   {
+    "id": "activation-utility",
     "name": "Activation utility",
     "file": "1万能激活工具.exe",
     "action": "CopyToPublicDesktop",
     "type": "Exe",
     "arguments": "",
     "timeoutSeconds": 600,
-    "enabled": true
+    "enabled": true,
+    "detectGroups": [
+      {
+        "displayNamePatterns": [],
+        "filePaths": ["%PUBLIC%\\Desktop\\1万能激活工具.exe"]
+      }
+    ]
   },
   {
+    "id": "sogou-input-14-3",
     "name": "Sogou Input 14.3",
     "file": "1搜狗输入法v14.3.0.9006去广告精简优化版.exe",
     "action": "Install",
     "type": "Exe",
     "arguments": "/S",
     "timeoutSeconds": 900,
-    "enabled": true
+    "enabled": true,
+    "detectGroups": [
+      {
+        "displayNamePatterns": ["*Sogou*", "*搜狗*输入法*"],
+        "filePaths": [
+          "%ProgramFiles%\\SogouInput\\*\\SogouPY.exe",
+          "%ProgramFiles(x86)%\\SogouInput\\*\\SogouPY.exe"
+        ]
+      }
+    ]
   }
 ]
