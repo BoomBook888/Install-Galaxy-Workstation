@@ -4,7 +4,8 @@ param(
     [string]$Branch = "main",
     [string]$ChromeDownloadUrl = "https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi",
     [string]$ChromeFallbackDownloadUrl = "https://dl.google.com/chrome/install/ChromeStandaloneSetup64.exe",
-    [string]$GalaxyDownloadUrl = "http://98.159.96.54/api/download/pro",
+    [string]$GalaxyDownloadUrl = "https://galaxy-bricklayer.xyz/api/download/pro",
+    [string]$GalaxyFallbackDownloadUrl = "https://galaxy-bricklayer.xyz/downloads/GalaxyBricklayer-latest-win-x64-Setup.exe",
     [switch]$SkipBundled,
     [switch]$SkipChrome,
     [switch]$SkipGalaxy,
@@ -464,7 +465,16 @@ function Install-LatestGalaxy {
 
     Write-Step "未检测到银河搬砖工，将从官网获取最新安装器"
     $path = Join-Path $RunDirectory "GalaxyBricklayer-latest-Setup.exe"
-    Invoke-Download -Url $GalaxyDownloadUrl -Destination $path -MinimumBytes 10MB
+    try {
+        Invoke-Download -Url $GalaxyDownloadUrl -Destination $path -MinimumBytes 10MB
+    }
+    catch {
+        if ([string]::IsNullOrWhiteSpace($GalaxyFallbackDownloadUrl)) {
+            throw
+        }
+        Write-Warning "官网动态下载接口暂不可用，正在改用官网最新版安装包地址"
+        Invoke-Download -Url $GalaxyFallbackDownloadUrl -Destination $path -MinimumBytes 10MB
+    }
     Get-Process -Name "FastBet" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Invoke-Installer -Name "Galaxy Bricklayer (latest official)" -Path $path -Type "Exe" -Arguments "/S"
